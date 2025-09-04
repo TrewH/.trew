@@ -6,7 +6,6 @@ RED=$(tput setaf 1)
 YELLOW=$(tput setaf 3)
 GREEN=$(tput setaf 2)
 
-LINUXTOOLBOXDIR="$HOME/linuxtoolbox"
 PACKAGER=""
 SUDO_CMD=""
 SUGROUP=""
@@ -129,13 +128,7 @@ link_fastfetch_config() {
   SRC="$GITPATH/config/fastfetch/config.jsonc"
   [ -f "$GITPATH/config/fastfetch/hosts/$HOST.jsonc" ] && SRC="$GITPATH/config/fastfetch/hosts/$HOST.jsonc"
   DEST="$USER_HOME/.config/fastfetch/config.jsonc"
-  mkdir -p "$(dirname "$DEST")"
-  [ -f "$SRC" ] || { echo "fastfetch config missing at $SRC"; return 1; }
-  if [ -e "$DEST" ] && [ ! -L "$DEST" ]; then
-    cp -a "$DEST" "${DEST}.bak.$(date +%Y%m%d%H%M%S)"
-  fi
-  ln -sfn "$SRC" "$DEST"
-  echo "✓ fastfetch config ↔ $DEST"
+  link_file "$SRC" "$DEST"
 }
 
 
@@ -176,18 +169,11 @@ install_dependencies() {
     install_font
 }
 
-install_starship_config_copy() {
+install_starship_config_link() {
   USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6); [ -n "$USER_HOME" ] || USER_HOME="$HOME"
-  SRC="$GITPATH/config/starship.toml"
-  DEST_DIR="${XDG_CONFIG_HOME:-$USER_HOME/.config}"
-  DEST="$DEST_DIR/starship.toml"
-  [ -f "$SRC" ] || { echo "starship.toml missing at $SRC"; return 1; }
-  mkdir -p "$DEST_DIR"
-  if [ -e "$DEST" ] && [ ! -L "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
-    cp -a "$DEST" "${DEST}.bak.$(date +%Y%m%d%H%M%S)"
-  fi
-  install -m 0644 "$SRC" "$DEST"
-  echo "✓ starship.toml → $DEST"
+  SRC="$GITPATH/config/starship.toml"               # keep starship.toml in repo
+  DEST="${XDG_CONFIG_HOME:-$USER_HOME/.config}/starship.toml"
+  link_file "$SRC" "$DEST"
 }
 
 
@@ -328,13 +314,19 @@ install_shell_rc() {
             # Starship for Bash
             echo 'command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"'
 
-            # Auto-start tmux on interactive shells (skip if already in tmux, in VS Code, or NO_TMUX=1)
-            echo 'case $- in *i*) :;; *) return;; esac'
-            echo '[ -n "$TMUX" ] && return'
-            echo '[ -n "$NO_TMUX" ] && return'
-            echo '[ -n "$VSCODE_PID" ] && return'
-            echo 'command -v tmux >/dev/null 2>&1 || return'
-            echo 'tmux attach -t default 2>/dev/null || tmux new -s default'
+            # Auto-start tmux: create a fresh window each time
+            case $- in *i*) :;; *) return;; esac
+            [ -n "$TMUX" ] && return
+            [ -n "$NO_TMUX" ] && return
+            [ -n "$VSCODE_PID" ] && return
+            command -v tmux >/dev/null 2>&1 || return
+
+            if tmux has-session -t default 2>/dev/null; then
+            # Attach, create a new window in PWD, then switch to it
+            tmux attach -t default \; new-window -c "$PWD" \; last-window
+            else
+            tmux new -s default -c "$PWD"
+            fi
 
             echo "$MARK_END"
         } >> "$BRC"
@@ -388,24 +380,53 @@ install_tmux_config_copy() {
     print_colored "$GREEN" "Installed ~/.tmux.conf"
 }
 
+install_tmux_config_link() {
+  USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6); [ -n "$USER_HOME" ] || USER_HOME="$HOME"
+  SRC="$GITPATH/config/tmux/tmux.conf"
+  DEST="$USER_HOME/.tmux.conf"
+  [ -f "$SRC" ] && link_file "$SRC" "$DEST" || print_colored "$YELLOW" "tmux.conf not found; skipping"
+}
 
+install_inputrc_link() {
+  USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6); [ -n "$USER_HOME" ] || USER_HOME="$HOME"
+  SRC="$GITPATH/config/inputrc"
+  DEST="$USER_HOME/.inputrc"
+  [ -f "$SRC" ] && link_file "$SRC" "$DEST" || print_colored "$YELLOW" "inputrc not found; skipping"
+}
 
+# Idempotent symlink helper: backs up a real file, then links
+link_file() {
+  SRC="$1"; DEST="$2"
+  [ -f "$SRC" ] || { print_colored "$RED" "Missing source: $SRC"; return 1; }
+  mkdir -p "$(dirname "$DEST")"
+  if [ -e "$DEST" ] && [ ! -L "$DEST" ]; then
+    cp -a "$DEST" "${DEST}.bak.$(date +%Y%m%d%H%M%S)"
+    print_colored "$YELLOW" "Backed up $DEST -> ${DEST}.bak.*"
+  fi
+  ln -sfn "$SRC" "$DEST" || { print_colored "$RED" "Failed link: $SRC -> $DEST"; return 1; }
+  print_colored "$GREEN" "Linked: $DEST -> $SRC"
+}
 
-setup_paths
-check_environment              # your existing function is fine
+setup_directories
+check_environment
 
-install_starship_config_copy   # copy repo/config/starship.toml -> ~/.config/
-install_tmux_config_copy
-ensure_fastfetch || echo "fastfetch not installed; continuing"
-link_fastfetch_config          # link repo/config/fastfetch -> ~/.config/
+# === Symlink all configs from repo so changes reflect instantly ===
+install_starship_config_link
+link_fastfetch_config
+install_tmux_config_link          # optional
+install_inputrc_link              # optional
 
-install_dependencies           # your existing function
-install_starship_and_fzf       # installs starship binary & fzf
-install_zoxide                 # optional
+# === Binaries / tools ===
+ensure_fastfetch || print_colored "$YELLOW" "fastfetch not installed; continuing"
+install_dependencies
+install_starship_and_fzf
+install_zoxide
 
-install_shell_rc               # source rc/* and init starship
+# === Shell init / aliases (your existing functions) ===
+seed_rc_if_missing
+link_rc_dir
+install_shell_rc
 
-echo "Done! Restart your shell."
-
+print_colored "$GREEN" "Done! Restart your shell (or 'exec bash') to pick up changes."
 
 
