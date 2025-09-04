@@ -222,10 +222,10 @@ install_font() {
         else
             printf "Font '%s' not installed. Font URL is not accessible.\n" "$FONT_NAME"
         fi
+    fi
 
-        if grep -qi microsoft /proc/version 2>/dev/null && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-            print_colored "$YELLOW" "WSL detected. Install a Nerd Font on WINDOWS and select it in Windows Terminal > Profile > Appearance."
-        fi
+    if grep -qi microsoft /proc/version 2>/dev/null && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        print_colored "$YELLOW" "WSL detected. Install a Nerd Font on WINDOWS and select it in Windows Terminal > Profile > Appearance."
     fi
 }
 
@@ -267,29 +267,31 @@ link_config() {
     USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
     mkdir -p "$USER_HOME/.config"
 
-    # Source block
     BRC="$USER_HOME/.bashrc"
     MARK_BEGIN="# >>> .trew init >>>"
     MARK_END="# <<< .trew init <<<"
-    SNIPPET=$'# >>> .trew init >>>\n[ -f "$HOME/.trew/mybash/.bashrc" ] && . "$HOME/.trew/mybash/.bashrc"\n# <<< .trew init <<<\n'
 
     touch "$BRC"
     if ! grep -qF "$MARK_BEGIN" "$BRC"; then
-        printf '\n%s' "$SNIPPET" >> "$BRC"
+        {
+            echo "$MARK_BEGIN"
+            echo '[ -f "$HOME/.trew/mybash/.bashrc" ] && . "$HOME/.trew/mybash/.bashrc"'
+            echo "$MARK_END"
+        } >> "$BRC"
         print_colored "$GREEN" "Injected .trew source block into ~/.bashrc"
     else
         print_colored "$YELLOW" "~/.bashrc already includes .trew block"
     fi
 
-    # Starship config from this repo
     ln -sfn "$GITPATH/starship.toml" "$USER_HOME/.config/starship.toml"
     print_colored "$GREEN" "Linked starship.toml"
 }
 
+
 # Main execution
 setup_directories
 check_environment
-ensure_fastfetch || print_colored "$YELLOW" "fastfetch not installed; config still linked."create_fastfetch_config
+ensure_fastfetch || print_colored "$YELLOW" "fastfetch not installed; I'll still link the config."
 create_fastfetch_config
 install_dependencies
 install_starship_and_fzf
@@ -300,3 +302,4 @@ if link_config; then
 else
     print_colored "$RED" "Something went wrong!"
 fi
+
