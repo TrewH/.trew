@@ -23,23 +23,22 @@ command_exists() {
 
 # Setup functions
 setup_directories() {
-    if [ ! -d "$LINUXTOOLBOXDIR" ]; then
-        print_colored "$YELLOW" "Creating linuxtoolbox directory: $LINUXTOOLBOXDIR"
-        mkdir -p "$LINUXTOOLBOXDIR"
-        print_colored "$GREEN" "linuxtoolbox directory created: $LINUXTOOLBOXDIR"
-    fi
+    GITPATH=$(dirname "$(realpath "$0")")
 
-    if [ -d "$LINUXTOOLBOXDIR/mybash" ]; then rm -rf "$LINUXTOOLBOXDIR/mybash"; fi
+    # Keep a stable home-owned path
+    TREW_HOME="$HOME/.trew"
+    MYBASH_SRC="$GITPATH/vendor/mybash" 
+    MYBASH_DST="$TREW_HOME/mybash"
 
-    print_colored "$YELLOW" "Cloning mybash repository into: $LINUXTOOLBOXDIR/mybash"
-    if git clone https://github.com/ChrisTitusTech/mybash "$LINUXTOOLBOXDIR/mybash"; then
-        print_colored "$GREEN" "Successfully cloned mybash repository"
-    else
-        print_colored "$RED" "Failed to clone mybash repository"
+    mkdir -p "$TREW_HOME"
+
+    if [ ! -d "$MYBASH_SRC" ]; then
+        print_colored "$RED" "vendor/mybash not found in repo. Copy your mybash here first."
         exit 1
     fi
 
-    cd "$LINUXTOOLBOXDIR/mybash" || exit
+    ln -sfn "$MYBASH_SRC" "$MYBASH_DST"
+    print_colored "$GREEN" "mybash linked: $MYBASH_DST"
 }
 
 check_environment() {
@@ -99,6 +98,51 @@ check_environment() {
         exit 1
     fi
 }
+
+ensure_fastfetch() {
+    if command -v fastfetch >/dev/null 2>&1; then return 0; fi
+    print_colored "$YELLOW" "Installing fastfetch from source…"
+
+    if command -v apt >/dev/null 2>&1; then
+        ${SUDO_CMD} apt update -y
+        ${SUDO_CMD} apt install -y git cmake gcc g++ pkg-config \
+            libdrm-dev libwayland-dev libx11-dev libxcb1-dev \
+            libxcb-randr0-dev libxcb-xinerama0-dev libpci-dev \
+            libgl1-mesa-dev
+    fi
+
+    cache="$HOME/.trew/cache/fastfetch"
+    mkdir -p "$cache"
+    if [ -d "$cache/.git" ]; then
+        git -C "$cache" fetch --depth=1 origin
+        git -C "$cache" reset --hard origin/master 2>/dev/null || git -C "$cache" reset --hard origin/main
+    else
+        git clone --depth=1 https://github.com/fastfetch-cli/fastfetch.git "$cache"
+    fi
+
+    cmake -S "$cache" -B "$cache/build" -DCMAKE_BUILD_TYPE=Release
+    cmake --build "$cache/build" -j"$(nproc)"
+    ${SUDO_CMD} cmake --install "$cache/build" || return 1
+
+    case ":$PATH:" in *:/usr/local/bin:*) ;; *) export PATH="/usr/local/bin:$PATH";; esac
+    print_colored "$GREEN" "fastfetch installed."
+}
+
+
+create_fastfetch_config() {
+    USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+    CONFIG_DIR="$USER_HOME/.config/fastfetch"
+    CONFIG_FILE="$CONFIG_DIR/config.jsonc"
+    SRC="$GITPATH/config/fastfetch/config.jsonc"   # <- keep it here in repo
+
+    mkdir -p "$CONFIG_DIR"
+    ln -sfn "$SRC" "$CONFIG_FILE" || {
+        print_colored "$RED" "Failed to link fastfetch config"
+        exit 1
+    }
+    print_colored "$GREEN" "Linked fastfetch config -> $SRC"
+}
+
 
 install_dependencies() {
     DEPENDENCIES='bash bash-completion tar bat tree multitail wget unzip fontconfig trash-cli'
@@ -178,6 +222,10 @@ install_font() {
         else
             printf "Font '%s' not installed. Font URL is not accessible.\n" "$FONT_NAME"
         fi
+
+        if grep -qi microsoft /proc/version 2>/dev/null && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            print_colored "$YELLOW" "WSL detected. Install a Nerd Font on WINDOWS and select it in Windows Terminal > Profile > Appearance."
+        fi
     fi
 }
 
@@ -214,61 +262,38 @@ install_zoxide() {
     fi
 }
 
-create_fastfetch_config() {
-    USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
-    CONFIG_DIR="$USER_HOME/.config/fastfetch"
-    CONFIG_FILE="$CONFIG_DIR/config.jsonc"
-    
-    mkdir -p "$CONFIG_DIR"
-    [ -e "$CONFIG_FILE" ] && rm -f "$CONFIG_FILE"
-    
-    if ! ln -svf "$GITPATH/config.jsonc" "$CONFIG_FILE"; then
-        print_colored "$RED" "Failed to create symbolic link for fastfetch config"
-        exit 1
-    fi
-}
 
 link_config() {
     USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
-    OLD_BASHRC="$USER_HOME/.bashrc"
-    BASH_PROFILE="$USER_HOME/.bash_profile"
-    
-    if [ -e "$OLD_BASHRC" ]; then
-        print_colored "$YELLOW" "Moving old bash config file to $USER_HOME/.bashrc.bak"
-        if ! mv "$OLD_BASHRC" "$USER_HOME/.bashrc.bak"; then
-            print_colored "$RED" "Can't move the old bash config file!"
-            exit 1
-        fi
-    fi
+    mkdir -p "$USER_HOME/.config"
 
-    print_colored "$YELLOW" "Linking new bash config file..."
-    if ! ln -svf "$GITPATH/.bashrc" "$USER_HOME/.bashrc" || ! ln -svf "$GITPATH/starship.toml" "$USER_HOME/.config/starship.toml"; then
-        print_colored "$RED" "Failed to create symbolic links"
-        exit 1
-    fi
+    # Source block
+    BRC="$USER_HOME/.bashrc"
+    MARK_BEGIN="# >>> .trew init >>>"
+    MARK_END="# <<< .trew init <<<"
+    SNIPPET=$'# >>> .trew init >>>\n[ -f "$HOME/.trew/mybash/.bashrc" ] && . "$HOME/.trew/mybash/.bashrc"\n# <<< .trew init <<<\n'
 
-    # Create .bash_profile if it doesn't exist
-    if [ ! -f "$BASH_PROFILE" ]; then
-        print_colored "$YELLOW" "Creating .bash_profile..."
-        echo "[ -f ~/.bashrc ] && . ~/.bashrc" > "$BASH_PROFILE"
-        print_colored "$GREEN" ".bash_profile created and configured to source .bashrc"
+    touch "$BRC"
+    if ! grep -qF "$MARK_BEGIN" "$BRC"; then
+        printf '\n%s' "$SNIPPET" >> "$BRC"
+        print_colored "$GREEN" "Injected .trew source block into ~/.bashrc"
     else
-        print_colored "$YELLOW" ".bash_profile already exists. Please ensure it sources .bashrc if needed."
+        print_colored "$YELLOW" "~/.bashrc already includes .trew block"
     fi
+
+    # Starship config from this repo
+    ln -sfn "$GITPATH/starship.toml" "$USER_HOME/.config/starship.toml"
+    print_colored "$GREEN" "Linked starship.toml"
 }
 
 # Main execution
 setup_directories
-echo "1"
 check_environment
-echo "2"
-install_dependencies
-echo "3"
-install_starship_and_fzf
-echo "4"
-install_zoxide
-echo "5"
+ensure_fastfetch || print_colored "$YELLOW" "fastfetch not installed; config still linked."create_fastfetch_config
 create_fastfetch_config
+install_dependencies
+install_starship_and_fzf
+install_zoxide
 
 if link_config; then
     print_colored "$GREEN" "Done!\nrestart your shell to see the changes."
