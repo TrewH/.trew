@@ -407,7 +407,7 @@ link_file() {
   print_colored "$GREEN" "Linked: $DEST -> $SRC"
 }
 
-setup_directories
+setup_paths
 check_environment
 
 # === Symlink all configs from repo so changes reflect instantly ===
