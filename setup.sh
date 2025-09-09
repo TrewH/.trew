@@ -383,10 +383,14 @@ install_tmux_config_copy() {
 install_tmux_config_link() {
   USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6); [ -n "$USER_HOME" ] || USER_HOME="$HOME"
   SRC="$GITPATH/config/tmux/tmux.conf"
-  DEST="$USER_HOME/.tmux.conf"
-  [ -f "$SRC" ] && link_file "$SRC" "$DEST" || print_colored "$YELLOW" "tmux.conf not found; skipping"
+  DEST="$USER_HOME/.config/tmux/tmux.conf"
+  [ -f "$SRC" ] && link_file "$SRC" "$DEST" || { print_colored "$YELLOW" "tmux.conf not found; skipping"; return 0; }
+  # Optional compatibility link so older tmux still finds it:
+  ln -sfn "$DEST" "$USER_HOME/.tmux.conf"
 }
 
+
+## change this to make sure things are going to ~/.config
 install_inputrc_link() {
   USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6); [ -n "$USER_HOME" ] || USER_HOME="$HOME"
   SRC="$GITPATH/config/inputrc"
