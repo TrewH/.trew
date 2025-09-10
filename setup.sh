@@ -128,7 +128,11 @@ link_fastfetch_config() {
   SRC="$GITPATH/config/fastfetch/config.jsonc"
   [ -f "$GITPATH/config/fastfetch/hosts/$HOST.jsonc" ] && SRC="$GITPATH/config/fastfetch/hosts/$HOST.jsonc"
   DEST="$USER_HOME/.config/fastfetch/config.jsonc"
-  link_file "$SRC" "$DEST"
+  if [ -f "$SRC" ]; then
+    link_file "$SRC" "$DEST"
+  else
+    print_colored "$YELLOW" "fastfetch config not found; skipping"
+  fi
 }
 
 
@@ -387,15 +391,18 @@ install_tmux_config_link() {
   [ -f "$SRC" ] && link_file "$SRC" "$DEST" || { print_colored "$YELLOW" "tmux.conf not found; skipping"; return 0; }
   # Optional compatibility link so older tmux still finds it:
   ln -sfn "$DEST" "$USER_HOME/.tmux.conf"
-}
+  }
 
-
-## change this to make sure things are going to ~/.config
-install_inputrc_link() {
+  install_inputrc_link() {
   USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6); [ -n "$USER_HOME" ] || USER_HOME="$HOME"
   SRC="$GITPATH/config/inputrc"
-  DEST="$USER_HOME/.inputrc"
-  [ -f "$SRC" ] && link_file "$SRC" "$DEST" || print_colored "$YELLOW" "inputrc not found; skipping"
+  DEST="$USER_HOME/.config/readline/inputrc"
+  if [ -f "$SRC" ]; then
+    link_file "$SRC" "$DEST"
+    ln -sfn "$DEST" "$USER_HOME/.inputrc"
+  else
+    print_colored "$YELLOW" "inputrc not found; skipping"
+  fi
 }
 
 # Idempotent symlink helper: backs up a real file, then links

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fastfetch-cli/fastfetch/dev/doc/jsonschema.json",
+  "logo": "auto",
+  "display": {
+    "separator": " = "
+  },
+  "modules": [
+    "os",
+    "kernel",
+    "shell",
+    "uptime",
+    "packages"
+  ]
+}
+
